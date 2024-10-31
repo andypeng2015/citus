@@ -37,6 +37,7 @@
 #include "nodes/parsenodes.h"
 #include "nodes/pg_list.h"
 #include "nodes/primnodes.h"
+#include "nodes/print.h"
 #include "nodes/value.h"
 #include "storage/lock.h"
 #include "utils/builtins.h"
@@ -588,6 +589,59 @@ RelayEventExtendNames(Node *parseTree, char *schemaName, uint64 shardId)
 			 * determined our dependency model for sequences, we error here.
 			 */
 			ereport(ERROR, (errmsg("cannot extend name for truncate statement")));
+			break;
+		}
+
+		case T_SecLabelStmt:
+		{
+			SecLabelStmt *secLabelStmt = (SecLabelStmt *) parseTree;
+			ObjectType objectType = secLabelStmt->objtype;
+
+			if (objectType == OBJECT_TABLE || objectType == OBJECT_COLUMN)
+			{
+				List *qualified_name = (List *) secLabelStmt->object;
+				String *table_name = NULL;
+
+				switch (list_length(qualified_name))
+				{
+					case 1:
+					{
+						table_name = castNode(String, linitial(qualified_name));
+						break;
+					}
+
+					case 2:
+					case 3:
+					{
+						table_name = castNode(String, lsecond(qualified_name));
+						break;
+					}
+
+					default:
+					{
+						ereport(ERROR, (errmsg("improper relation name: \"%s\"",
+											   NameListToString(qualified_name))));
+						break;
+					}
+				}
+
+				/* Now do the table name change;
+				 * Need to update the String object
+				 */
+				char *relationName = strVal(table_name);
+				AppendShardIdToName(&relationName, shardId);
+				strVal(table_name) = relationName;
+			}
+			else
+			{
+				/* The security label is not on a table or a column;
+				 * should never happen, but error out just in case
+				 */
+				ereport(WARNING, (errmsg(
+									  "Unsupported security label type in security label statement"),
+								  errdetail("Object type: %u", (uint32) objectType)));
+			}
+
 			break;
 		}
 
